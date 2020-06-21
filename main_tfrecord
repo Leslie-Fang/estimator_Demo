@@ -1,0 +1,169 @@
+import tensorflow.compat.v1 as tf
+import random
+import numpy as np
+from train_images import train_images
+from train_labels import train_labels
+
+from inference_images import inference_images
+from inference_labels import inference_labels
+
+tf.disable_v2_behavior()
+tf.disable_eager_execution()
+
+def model_fn_build():
+    def model_fn(features, labels, mode, params):
+        tf.logging.info("***-----------------Build the training mode----------------------***")
+        # print(features)
+        # print(labels)
+        #tf.logging.info("*** Build the training mode ***")
+        logits = tf.layers.dense(inputs=features, name='layer_fc1', units=10, activation=tf.nn.softmax, use_bias=True)
+
+        if mode == tf.estimator.ModeKeys.PREDICT:
+            spec = tf.estimator.EstimatorSpec(mode=mode,
+                                              predictions=logits)
+        else:
+            cross_entropy = -tf.reduce_sum(labels * tf.log(logits))
+
+            loss = tf.reduce_mean(cross_entropy)
+            optimizer = tf.train.AdamOptimizer(learning_rate=0.01)
+            train_op = optimizer.minimize(
+                loss=loss, global_step=tf.train.get_global_step())
+
+            metrics = \
+            {
+                "accuracy": tf.metrics.accuracy(tf.argmax(labels, axis=1), tf.argmax(logits, axis=1))
+            }
+
+            # Wrap all of this in an EstimatorSpec.
+            spec = tf.estimator.EstimatorSpec(
+                mode=mode,
+                loss=loss,
+                train_op=train_op,
+                eval_metric_ops=metrics)
+        return spec
+
+    return model_fn
+
+
+def input_fn():
+    train_images_data = train_images('./train_data/train-images-idx3-ubyte')
+    images_number = train_images_data.get_images_number()
+    images = train_images_data.read_images(images_number)
+    train_labels_data = train_labels('./train_data/train-labels-idx1-ubyte')
+    labels = train_labels_data.read_labels(images_number)
+    return tf.data.Dataset.from_tensor_slices((images, labels)).batch(128)
+
+def input_fn_tfrecord():
+    dataset = tf.data.TFRecordDataset('./train_data/train.tfrecords')
+    image_feature_description = {
+        'label': tf.FixedLenFeature([], tf.float32),
+        'image': tf.FixedLenFeature([], tf.string),
+    }
+    def parse_image(example_proto):
+        data = tf.io.parse_single_example(example_proto, image_feature_description)
+        image = tf.io.decode_raw(data['image'], tf.float64)
+        image = tf.cast(tf.reshape(image, [28*28]), tf.float32)
+        #label = [float(i == data['label']) for i in range(10)]
+        label = tf.one_hot(tf.cast(data['label'], tf.int32), 10)
+        return (image, label)
+    dataset = dataset.map(parse_image, num_parallel_calls=28)
+    return dataset.batch(128)
+
+def input_fn_inference():
+    inference_images_data = inference_images('test_data/t10k-images-idx3-ubyte')
+    images_number = inference_images_data.get_images_number()
+    images = inference_images_data.read_images(images_number)
+    return tf.data.Dataset.from_tensor_slices(images).batch(128)
+
+def input_fn_inference_tfrecord():
+    dataset = tf.data.TFRecordDataset('./test_data/test.tfrecords')
+    image_feature_description = {
+        'label': tf.FixedLenFeature([], tf.float32),
+        'image': tf.FixedLenFeature([], tf.string),
+    }
+    def parse_image(example_proto):
+        data = tf.io.parse_single_example(example_proto, image_feature_description)
+        image = tf.io.decode_raw(data['image'], tf.float64)
+        image = tf.cast(tf.reshape(image, [28*28]), tf.float32)
+        #label = [float(i == data['label']) for i in range(10)]
+        label = tf.one_hot(tf.cast(data['label'], tf.int32), 10)
+        return (image, label)
+    dataset = dataset.map(parse_image, num_parallel_calls=28)
+    return dataset.batch(128)
+
+def get_prediction_labels():
+    inference_labels_data = inference_labels('test_data/t10k-labels-idx1-ubyte')
+    inference_images_data = inference_images('test_data/t10k-images-idx3-ubyte')
+    images_number = inference_images_data.get_images_number()
+    labels = inference_labels_data.read_labels(images_number)
+    return labels
+
+def _bytes_feature(value):
+  """Returns a bytes_list from a string / byte."""
+  if isinstance(value, type(tf.constant(0))):
+    value = value.numpy() # BytesList won't unpack a string from an EagerTensor.
+  return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
+
+def _float_feature(value):
+  """Returns a float_list from a float / double."""
+  return tf.train.Feature(float_list=tf.train.FloatList(value=[value]))
+
+def _int64_feature(value):
+  """Returns an int64_list from a bool / enum / int / uint."""
+  return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
+
+def create_tfrecord():
+    train_images_data = train_images('./train_data/train-images-idx3-ubyte')
+    images_number = train_images_data.get_images_number()
+    images = train_images_data.read_images(images_number)
+    train_labels_data = train_labels('./train_data/train-labels-idx1-ubyte')
+    labels = train_labels_data.read_labels(images_number)
+
+    with tf.python_io.TFRecordWriter('./train_data/train.tfrecords') as writer:
+        for i in range(images_number):
+            feature = {
+                'label': _float_feature(np.argmax(labels[i])),
+                'image': _bytes_feature(np.array(images[i]).tobytes()),
+            }
+            tf_example = tf.train.Example(features=tf.train.Features(feature=feature))
+            writer.write(tf_example.SerializeToString())
+
+    inference_labels_data = inference_labels('test_data/t10k-labels-idx1-ubyte')
+    inference_images_data = inference_images('test_data/t10k-images-idx3-ubyte')
+    images_number = inference_images_data.get_images_number()
+    labels = inference_labels_data.read_labels(images_number)
+    images = inference_images_data.read_images(images_number)
+    with tf.python_io.TFRecordWriter('./test_data/test.tfrecords') as writer:
+        for i in range(images_number):
+
+            feature = {
+                'label': _float_feature(np.argmax(labels[i])),
+                'image': _bytes_feature(np.array(images[i]).tobytes()),
+            }
+
+            tf_example = tf.train.Example(features=tf.train.Features(feature=feature))
+
+            writer.write(tf_example.SerializeToString())
+
+if __name__ == "__main__":
+    
+    create_tfrecord()
+
+    model_fn = model_fn_build()
+    params = {}
+    model = tf.estimator.Estimator(model_fn=model_fn,
+                                   params=params,
+                                   model_dir="./output/")
+
+    model.train(input_fn_tfrecord)
+
+    res = model.predict(input_fn_inference_tfrecord)
+
+    label = get_prediction_labels()
+    index = 0
+    right_count = 0
+    for item in list(res):
+        if np.argmax(item) == np.argmax(label[index]):
+            right_count += 1
+        index = index + 1
+    print("accuracy is: {}".format(float(right_count)/index))
