@@ -51,7 +51,8 @@ class inference_labels():
 			for item in range(batchsize):
 				bin_buf = self.file_obj.read(1) #读取二进制数组
 				label_val = struct.unpack('B', bin_buf)# 'i'代表'integer',>指原来的数据是大端
-				label_vals.append(label_val[0])
+				label_vals.append([float(i == label_val[0]) for i in range(10)])
+				#label_vals.append(label_val[0])
 			return label_vals
 		except:
 			self.file_obj.close()
