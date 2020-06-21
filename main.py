@@ -92,7 +92,7 @@ if __name__ == "__main__":
         print("----------------")
         print(np.argmax(item))
         print(label[index])
-        if np.argmax(item) == label[index]:
+        if np.argmax(item) == np.argmax(label[index]):
             right_count += 1
         index = index + 1
     print("accuracy is: {}".format(float(right_count)/index))
